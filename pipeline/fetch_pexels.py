@@ -9,11 +9,11 @@ or from a local .api.txt file containing PEXELS_API=<key>.
 """
 import argparse
 import json
-import os
-import sys
 from pathlib import Path
 
 import requests
+
+from keys import load_key
 
 ROOT = Path(__file__).resolve().parent.parent
 SEARCH_URL = "https://api.pexels.com/videos/search"
@@ -21,19 +21,6 @@ VIDEO_URL = "https://api.pexels.com/videos/videos/{id}"
 MIN_SECONDS = 5
 MAX_SECONDS = 60
 TARGET_WIDTH = 960  # small enough for fast CPU study
-
-
-def load_key() -> str:
-    key = os.environ.get("PEXELS_API", "").strip()
-    if key:
-        return key
-    key_file = ROOT / ".api.txt"
-    if key_file.exists():
-        for line in key_file.read_text(encoding="utf-8").splitlines():
-            name, _, value = line.partition("=")
-            if name.strip() == "PEXELS_API" and value.strip():
-                return value.strip()
-    sys.exit("PEXELS_API not found in env or .api.txt")
 
 
 def search(key: str, query: str, per_page: int = 30) -> list[dict]:
@@ -89,7 +76,7 @@ def main() -> None:
     ap.add_argument("--pick", type=int, help="Pexels video id to download")
     args = ap.parse_args()
 
-    key = load_key()
+    key = load_key("PEXELS_API")
     if args.pick:
         path = download(get_video(key, args.pick), ROOT / "inbox")
         print(f"saved {path.relative_to(ROOT)}")

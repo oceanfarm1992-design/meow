@@ -1,7 +1,8 @@
 name: cat-voice
 
-# Fetch a Pexels clip -> free frame study (motion + CLIP) -> narrate the cat's
-# inner-voice script in the owner's cloned voice -> merge into final.mp4.
+# Fetch a Pexels clip -> free frame study (motion + CLIP) -> OpenAI writes the
+# cat's inner-voice script -> narrate it in the owner's cloned voice -> merge
+# into final.mp4 -> OpenAI transcribes each voice part to check the words.
 # Nothing is published; results are uploaded as run artifacts.
 
 on:
@@ -16,6 +17,9 @@ on:
       style:
         description: comedy or default
         default: comedy
+      script-source:
+        description: "ai = OpenAI writes it from the frame study; file = scripts/pexels_<id>.<language>.txt"
+        default: ai
 
 permissions:
   contents: read
@@ -55,21 +59,49 @@ jobs:
           retention-days: 7
 
   script:
+    needs: study
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       text: ${{ steps.read.outputs.text }}
     steps:
       - uses: actions/checkout@v4
-      - id: read
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests==2.34.2
+      - uses: actions/download-artifact@v4
+        with:
+          name: study
+      - name: Write script with OpenAI
+        if: inputs.script-source == 'ai'
+        env:
+          OPEN_AI_API: ${{ secrets.OPEN_AI_API }}
+        run: |
+          python pipeline/write_script.py "out/pexels_${{ inputs.pexels-id }}/timeline.json" \
+            --lang "${{ inputs.language }}" --style "${{ inputs.style }}" \
+            --out "script/script.${{ inputs.language }}.txt"
+      - name: Use hand-written script
+        if: inputs.script-source == 'file'
         run: |
           file="scripts/pexels_${{ inputs.pexels-id }}.${{ inputs.language }}.txt"
           test -f "$file" || { echo "::error::missing $file"; exit 1; }
+          mkdir -p script && cp "$file" "script/script.${{ inputs.language }}.txt"
+      - id: read
+        run: |
+          file="script/script.${{ inputs.language }}.txt"
+          { echo '## Script (${{ inputs.script-source }})'; echo; sed 's/^/> /' "$file"; } >> "$GITHUB_STEP_SUMMARY"
           {
             echo "text<<SCRIPT_EOF"
             tr '\n' ' ' < "$file"
             echo
             echo "SCRIPT_EOF"
           } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: script
+          path: script/
+          retention-days: 7
 
   voice:
     needs: script
@@ -87,6 +119,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests==2.34.2 numpy==2.5.3
       - run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
       - uses: actions/download-artifact@v4
         with:
@@ -109,8 +146,24 @@ jobs:
             echo
             echo "Clip credit: $credit"
           } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: voiceover-part_*     # per-sentence WAVs from the voice engine
+          path: check/wavs
+      - uses: actions/download-artifact@v4
+        with:
+          name: voiceover-script-parts  # per-sentence texts from the voice engine
+          path: check/texts
+      - name: Check spoken words (OpenAI transcription)
+        env:
+          OPEN_AI_API: ${{ secrets.OPEN_AI_API }}
+        run: |
+          python pipeline/check_voice.py --wavs check/wavs --texts check/texts \
+            --lang "${{ inputs.language }}" --json voice_check.json >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: final
-          path: final.mp4
+          path: |
+            final.mp4
+            voice_check.json
           retention-days: 7
