@@ -1,0 +1,6 @@
+.api.txt
+.env
+.venv/
+inbox/
+out/
+__pycache__/

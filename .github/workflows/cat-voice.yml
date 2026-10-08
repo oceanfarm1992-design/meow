@@ -1,0 +1,116 @@
+name: cat-voice
+
+# Fetch a Pexels clip -> free frame study (motion + CLIP) -> narrate the cat's
+# inner-voice script in the owner's cloned voice -> merge into final.mp4.
+# Nothing is published; results are uploaded as run artifacts.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pexels-id:
+        description: Pexels video id
+        default: "34690395"
+      language:
+        description: ta or en
+        default: ta
+      style:
+        description: comedy or default
+        default: comedy
+
+permissions:
+  contents: read
+
+jobs:
+  study:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+      - run: pip install -r requirements.txt
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-clip-vit-base-patch32
+      - name: Fetch clip from Pexels
+        env:
+          PEXELS_API: ${{ secrets.PEXELS_API }}
+        run: python pipeline/fetch_pexels.py --pick "${{ inputs.pexels-id }}"
+      - name: Frame study
+        run: |
+          python pipeline/study.py "inbox/pexels_${{ inputs.pexels-id }}.mp4" --out out
+          cat "out/pexels_${{ inputs.pexels-id }}/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: study
+          path: |
+            inbox/
+            out/*/timeline.json
+            out/*/summary.md
+            out/*/contact_sheet.jpg
+          retention-days: 7
+
+  script:
+    runs-on: ubuntu-latest
+    outputs:
+      text: ${{ steps.read.outputs.text }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: |
+          file="scripts/pexels_${{ inputs.pexels-id }}.${{ inputs.language }}.txt"
+          test -f "$file" || { echo "::error::missing $file"; exit 1; }
+          {
+            echo "text<<SCRIPT_EOF"
+            tr '\n' ' ' < "$file"
+            echo
+            echo "SCRIPT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  voice:
+    needs: script
+    uses: oceanfarm1992-design/styletts2-voice-clone/.github/workflows/narrate.yml@main
+    with:
+      text: ${{ needs.script.outputs.text }}
+      language: ${{ inputs.language }}
+      style: ${{ inputs.style }}
+      artifact-name: voiceover
+    secrets:
+      VOICE_REPO_PAT: ${{ secrets.VOICE_REPO_PAT }}
+
+  video:
+    needs: [study, voice]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+      - uses: actions/download-artifact@v4
+        with:
+          name: study
+      - uses: actions/download-artifact@v4
+        with:
+          name: voiceover   # -> voice.wav
+      - name: Merge voice onto clip
+        run: |
+          clip="inbox/pexels_${{ inputs.pexels-id }}.mp4"
+          # keep the full clip length; pad the voice with silence if shorter
+          ffmpeg -v error -y -i "$clip" -i voice.wav \
+            -filter_complex "[1:a]apad[a]" -map 0:v -map "[a]" \
+            -c:v copy -c:a aac -b:a 160k -shortest final.mp4
+          credit=$(python3 -c "import json;print(json.load(open('inbox/pexels_${{ inputs.pexels-id }}.json'))['credit'])")
+          {
+            echo "## Voice"
+            echo "Engines per part: \`${{ needs.voice.outputs.engines }}\`"
+            echo "(indicf5+rvc / styletts2+rvc = cloned voice, edge+rvc = fallback)"
+            echo
+            echo "Clip credit: $credit"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: final
+          path: final.mp4
+          retention-days: 7
