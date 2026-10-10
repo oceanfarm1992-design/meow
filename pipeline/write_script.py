@@ -21,8 +21,9 @@ log = logging.getLogger("write_script")
 
 CHAT_URL = "https://api.openai.com/v1/chat/completions"
 MODEL = os.environ.get("OPENAI_SCRIPT_MODEL", "gpt-5.5")
-# Measured on the cloned voice, pauses included: Tamil ~11 chars/s, English ~9.9 chars/s.
-CHARS_PER_SECOND = {"ta": 11.0, "en": 9.5}
+# Script length budget per second of clip. Measured: Tamil ~11 chars/s and English ~9.9
+# with pauses; Tamil raised to 12 since render.py shortens pauses (and may slow the voice).
+CHARS_PER_SECOND = {"ta": 12.0, "en": 9.5}
 BUDGET_TOLERANCE = 0.12
 MIN_LINE_CHARS = 25  # the voice engine splits on . ! ? and very short parts come out garbled
 MAX_LINE_CHARS = 90

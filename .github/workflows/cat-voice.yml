@@ -26,6 +26,9 @@ on:
       banner:
         description: Title shown in the black banner at the top (empty = none)
         default: KAREES TALKS
+      voice-tempo:
+        description: "Voice speed, same pitch: 1.0 = as generated, 0.9 = 10% slower"
+        default: "0.9"
       script-source:
         description: "ai = OpenAI writes it from the frame study; file = scripts/pexels_<id>.<language>.txt"
         default: ai
@@ -164,6 +167,7 @@ jobs:
           # never cuts the narration: holds the last frame if the voice is longer
           python pipeline/render.py --clip "$clip" --voice voice.wav --music music.wav \
             --out final.mp4 --start "$start" --length "$length" --banner "$BANNER" \
+            --tempo "${{ inputs.voice-tempo }}" \
             | tee -a "$GITHUB_STEP_SUMMARY"
           credit=$(python3 -c "import json;print(json.load(open('inbox/pexels_${{ inputs.pexels-id }}.json'))['credit'])")
           {
