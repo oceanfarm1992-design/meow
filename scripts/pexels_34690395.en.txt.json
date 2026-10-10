@@ -1,0 +1,45 @@
+{
+  "model": "gpt-5.5",
+  "lines": [
+    {
+      "at": 0.2,
+      "text": "Oh good, the hand is back for inspection."
+    },
+    {
+      "at": 2.6,
+      "text": "I'm not mad, I'm just doing quality control."
+    },
+    {
+      "at": 5.4,
+      "text": "Okay, maybe I'm a tiny bit mad."
+    },
+    {
+      "at": 7.3,
+      "text": "Why does it keep wiggling like it pays rent?"
+    },
+    {
+      "at": 12.4,
+      "text": "Hold still, human, I'm filing a complaint."
+    },
+    {
+      "at": 18.8,
+      "text": "No, I don't want pets, I want justice."
+    },
+    {
+      "at": 23.6,
+      "text": "Also maybe pets, but only after the chewing."
+    },
+    {
+      "at": 27.5,
+      "text": "Wait, this is fun, don't tell my face."
+    },
+    {
+      "at": 35.9,
+      "text": "I said stop, then I grabbed you again, yes."
+    },
+    {
+      "at": 40.3,
+      "text": "Congratulations, your hand is my intern now."
+    }
+  ]
+}

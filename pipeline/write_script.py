@@ -21,10 +21,10 @@ log = logging.getLogger("write_script")
 
 CHAT_URL = "https://api.openai.com/v1/chat/completions"
 MODEL = os.environ.get("OPENAI_SCRIPT_MODEL", "gpt-5.5")
-# Measured on the cloned Tamil voice: ~13.6 chars/s speech + ~0.5 s between sentences.
-CHARS_PER_SECOND = {"ta": 11.0, "en": 13.0}  # overall rate incl. pauses
+# Measured on the cloned voice, pauses included: Tamil ~11 chars/s, English ~9.9 chars/s.
+CHARS_PER_SECOND = {"ta": 11.0, "en": 9.5}
 BUDGET_TOLERANCE = 0.12
-MIN_LINE_CHARS = 20  # very short sentences come out garbled in the cloned voice
+MIN_LINE_CHARS = 20  # the voice engine splits on . ! ? and very short parts come out garbled
 MAX_LINE_CHARS = 70
 MAX_ATTEMPTS = 3
 
@@ -34,7 +34,7 @@ LANG_RULES = {
         "but keep words clear and easy for a text-to-speech model: avoid heavy slang contractions "
         "and English loanwords written in Tamil (no ஹலோ, அட்டாக், சிப்ஸ் etc.)."
     ),
-    "en": "Write in casual, punchy English.",
+    "en": "Write in casual everyday English, the way a real person talks to themselves, with contractions (I'm, don't, that's).",
 }
 
 SCHEMA = {
@@ -81,10 +81,11 @@ Write the cat's secret inner voice (first person, the cat talking in its head ab
 
 Rules:
 - About {budget} characters in total (spaces included), split into 9 to 13 short sentences.
-- Each line {MIN_LINE_CHARS} to {MAX_LINE_CHARS} characters (no tiny one-word lines) and ends with . ! or ?
+- Exactly one sentence per line, {MIN_LINE_CHARS} to {MAX_LINE_CHARS} characters, ending with . ! or ? (no extra . ! ? inside a line, no semicolons).
 - Numbers written as words, no digits, no emojis, no quotes, no stage directions.
 - Give each line an "at" time (seconds) so jokes land on the matching moment in the timeline; lines in time order, first line near 0, last line starting before {tl['duration'] - 4:.0f}s.
-- Make it genuinely funny: a clear mini story with escalation and a punchline at the end."""
+- It must sound natural when spoken aloud: simple everyday words and normal phrasing, like a real thought. No strange metaphors, made-up phrases or forced wordplay; the humour comes from the cat's attitude and what is really happening.
+- A clear mini story with escalation and a funny ending line."""
 
 
 def validate(lines: list[dict], lang: str, budget: int) -> list[str]:
@@ -96,6 +97,8 @@ def validate(lines: list[dict], lang: str, budget: int) -> list[str]:
         t = l["text"].strip()
         if not re.search(r"[.!?।]$", t):
             problems.append(f"line {i} must end with . ! or ?")
+        if re.search(r"[.!?।;]", t[:-1]):
+            problems.append(f"line {i} must be one sentence (no . ! ? ; before the end)")
         if not MIN_LINE_CHARS <= len(t) <= MAX_LINE_CHARS:
             problems.append(f"line {i} is {len(t)} characters, needs {MIN_LINE_CHARS} to {MAX_LINE_CHARS}")
         if re.search(r"\d", t):

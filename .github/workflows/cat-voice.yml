@@ -34,7 +34,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+      - name: Install ffmpeg
+        timeout-minutes: 6   # a stuck apt mirror once took 18 min
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
       - run: pip install -r requirements.txt
       - uses: actions/cache@v4
         with:
@@ -124,7 +126,9 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install requests==2.34.2 numpy==2.5.3
-      - run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+      - name: Install ffmpeg
+        timeout-minutes: 6   # a stuck apt mirror once took 18 min
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
       - uses: actions/download-artifact@v4
         with:
           name: study
@@ -134,10 +138,16 @@ jobs:
       - name: Merge voice onto clip
         run: |
           clip="inbox/pexels_${{ inputs.pexels-id }}.mp4"
-          # keep the full clip length; pad the voice with silence if shorter
-          ffmpeg -v error -y -i "$clip" -i voice.wav \
-            -filter_complex "[1:a]apad[a]" -map 0:v -map "[a]" \
-            -c:v copy -c:a aac -b:a 160k -shortest final.mp4
+          vdur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$clip")
+          adur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 voice.wav)
+          # never cut the narration: if it is longer, hold the last frame until it ends
+          hold=$(python3 -c "print(round(max(0.0, $adur + 0.5 - $vdur), 2))")
+          if [ "$hold" != "0.0" ]; then
+            echo "voice ${adur}s > clip ${vdur}s: holding last frame ${hold}s"
+            ffmpeg -v error -y -i "$clip" -i voice.wav               -filter_complex "[0:v]tpad=stop_mode=clone:stop_duration=${hold}[v];[1:a]apad[a]"               -map "[v]" -map "[a]" -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p               -c:a aac -b:a 160k -shortest final.mp4
+          else
+            ffmpeg -v error -y -i "$clip" -i voice.wav               -filter_complex "[1:a]apad[a]" -map 0:v -map "[a]"               -c:v copy -c:a aac -b:a 160k -shortest final.mp4
+          fi
           credit=$(python3 -c "import json;print(json.load(open('inbox/pexels_${{ inputs.pexels-id }}.json'))['credit'])")
           {
             echo "## Voice"
