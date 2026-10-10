@@ -17,6 +17,15 @@ on:
       style:
         description: comedy or default
         default: comedy
+      cat-name:
+        description: The cat's name used in the script
+        default: Karees
+      window:
+        description: Seconds of the clip to use (liveliest stretch); 0 = whole clip
+        default: "30"
+      banner:
+        description: Title shown in the black banner at the top (empty = none)
+        default: KAREES TALKS
       script-source:
         description: "ai = OpenAI writes it from the frame study; file = scripts/pexels_<id>.<language>.txt"
         default: ai
@@ -82,6 +91,7 @@ jobs:
         run: |
           python pipeline/write_script.py "out/pexels_${{ inputs.pexels-id }}/timeline.json" \
             --lang "${{ inputs.language }}" --style "${{ inputs.style }}" \
+            --name "${{ inputs.cat-name }}" --window "${{ inputs.window }}" \
             --out "script/script.${{ inputs.language }}.txt"
       - name: Use hand-written script
         if: inputs.script-source == 'file'
@@ -128,26 +138,33 @@ jobs:
       - run: pip install requests==2.34.2 numpy==2.5.3
       - name: Install ffmpeg
         timeout-minutes: 6   # a stuck apt mirror once took 18 min
-        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg fonts-dejavu-core
       - uses: actions/download-artifact@v4
         with:
           name: study
       - uses: actions/download-artifact@v4
         with:
           name: voiceover   # -> voice.wav
-      - name: Merge voice onto clip
+      - uses: actions/download-artifact@v4
+        with:
+          name: script
+          path: script
+      - name: Render (music bed, tighter pauses, banner)
+        env:
+          BANNER: ${{ inputs.banner }}
         run: |
           clip="inbox/pexels_${{ inputs.pexels-id }}.mp4"
-          vdur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$clip")
-          adur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 voice.wav)
-          # never cut the narration: if it is longer, hold the last frame until it ends
-          hold=$(python3 -c "print(round(max(0.0, $adur + 0.5 - $vdur), 2))")
-          if [ "$hold" != "0.0" ]; then
-            echo "voice ${adur}s > clip ${vdur}s: holding last frame ${hold}s"
-            ffmpeg -v error -y -i "$clip" -i voice.wav               -filter_complex "[0:v]tpad=stop_mode=clone:stop_duration=${hold}[v];[1:a]apad[a]"               -map "[v]" -map "[a]" -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p               -c:a aac -b:a 160k -shortest final.mp4
-          else
-            ffmpeg -v error -y -i "$clip" -i voice.wav               -filter_complex "[1:a]apad[a]" -map 0:v -map "[a]"               -c:v copy -c:a aac -b:a 160k -shortest final.mp4
+          meta="script/script.${{ inputs.language }}.txt.json"
+          start=0; length=0
+          if [ -f "$meta" ]; then
+            start=$(python3 -c "import json;print(json.load(open('$meta'))['start'])")
+            length=$(python3 -c "import json;print(json.load(open('$meta'))['length'])")
           fi
+          python pipeline/music.py --seconds 90 --out music.wav
+          # never cuts the narration: holds the last frame if the voice is longer
+          python pipeline/render.py --clip "$clip" --voice voice.wav --music music.wav \
+            --out final.mp4 --start "$start" --length "$length" --banner "$BANNER" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
           credit=$(python3 -c "import json;print(json.load(open('inbox/pexels_${{ inputs.pexels-id }}.json'))['credit'])")
           {
             echo "## Voice"
