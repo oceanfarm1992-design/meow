@@ -29,6 +29,12 @@ on:
       voice-tempo:
         description: "Voice speed, same pitch: 1.0 = as generated, 0.9 = 10% slower"
         default: "0.9"
+      voice-engine:
+        description: "own = cloned voice (styletts2-voice-clone); elevenlabs = voice from voices/voices.json"
+        default: own
+      elevenlabs-voice:
+        description: Key in voices/voices.json (used when voice-engine = elevenlabs)
+        default: karees_mass_hero_ta
       script-source:
         description: "ai = OpenAI writes it from the frame study; file = scripts/pexels_<id>.<language>.txt"
         default: ai
@@ -95,6 +101,7 @@ jobs:
           python pipeline/write_script.py "out/pexels_${{ inputs.pexels-id }}/timeline.json" \
             --lang "${{ inputs.language }}" --style "${{ inputs.style }}" \
             --name "${{ inputs.cat-name }}" --window "${{ inputs.window }}" \
+            ${{ inputs.voice-engine == 'elevenlabs' && '--tags' || '' }} \
             --out "script/script.${{ inputs.language }}.txt"
       - name: Use hand-written script
         if: inputs.script-source == 'file'
@@ -120,6 +127,7 @@ jobs:
 
   voice:
     needs: script
+    if: inputs.voice-engine == 'own'
     uses: oceanfarm1992-design/styletts2-voice-clone/.github/workflows/narrate.yml@main
     with:
       text: ${{ needs.script.outputs.text }}
@@ -129,8 +137,56 @@ jobs:
     secrets:
       VOICE_REPO_PAT: ${{ secrets.VOICE_REPO_PAT }}
 
+  voice-elevenlabs:
+    needs: script
+    if: inputs.voice-engine == 'elevenlabs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      engines: ${{ steps.tts.outputs.engines }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests==2.34.2 numpy==2.5.3
+      - name: Install ffmpeg
+        timeout-minutes: 6
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
+      - uses: actions/download-artifact@v4
+        with:
+          name: script
+          path: script
+      - id: tts
+        env:
+          ELEVENLAB_API: ${{ secrets.ELEVENLAB_API }}
+        run: |
+          src="script/script.${{ inputs.language }}.txt"
+          [ -f "$src.tagged" ] && src="$src.tagged"
+          python pipeline/tts_elevenlabs.py "$src" --voice "${{ inputs.elevenlabs-voice }}" --out el \
+            | tee el.log
+          echo "engines=$(grep -o 'engine=[^)]*' el.log | cut -d= -f2 | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+      # same artifact names as the cloned-voice engine, so the video job is shared
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voiceover
+          path: el/voice.wav
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voiceover-part_all
+          path: el/parts/
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voiceover-script-parts
+          path: el/texts/
+          retention-days: 1
+
   video:
-    needs: [study, voice]
+    needs: [study, voice, voice-elevenlabs]
+    # run after whichever voice job ran; the other one is skipped
+    if: ${{ !cancelled() && needs.study.result == 'success' && (needs.voice.result == 'success' || needs.voice-elevenlabs.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -172,7 +228,7 @@ jobs:
           credit=$(python3 -c "import json;print(json.load(open('inbox/pexels_${{ inputs.pexels-id }}.json'))['credit'])")
           {
             echo "## Voice"
-            echo "Engines per part: \`${{ needs.voice.outputs.engines }}\`"
+            echo "Engines per part: \`${{ needs.voice.outputs.engines || needs.voice-elevenlabs.outputs.engines }}\`"
             echo "(indicf5+rvc / styletts2+rvc = cloned voice, edge+rvc = fallback)"
             echo
             echo "Clip credit: $credit"

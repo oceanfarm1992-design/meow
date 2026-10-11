@@ -47,6 +47,8 @@ STYLE_RULES = {
     ),
 }
 ADDRESS = {"ta": "மம்மி", "en": "Mom"}
+# eleven_v3 delivery tags; "none" when the voice engine has no tag support
+TAGS = ["none", "excited", "dramatic", "proud", "sarcastic", "laughs", "whispers", "shouting", "curious"]
 
 SCHEMA = {
     "name": "cat_script",
@@ -61,10 +63,11 @@ SCHEMA = {
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["at", "text"],
+                    "required": ["at", "text", "tag"],
                     "properties": {
                         "at": {"type": "number", "description": "start time in seconds"},
                         "text": {"type": "string"},
+                        "tag": {"type": "string", "enum": TAGS, "description": "delivery tag"},
                     },
                 },
             }
@@ -84,7 +87,11 @@ def describe_timeline(tl: dict, meta: dict | None) -> str:
             "Frame-study timeline (automatic, may be imperfect):\n" + "\n".join(rows))
 
 
-def build_prompt(tl: dict, meta: dict | None, lang: str, style: str, budget: int, name: str) -> str:
+def build_prompt(tl: dict, meta: dict | None, lang: str, style: str, budget: int, name: str,
+                 tags: bool) -> str:
+    tag_rule = ("- Give each line a delivery tag that fits the moment (vary them, use 'dramatic' or "
+                "'proud' for build-ups and 'excited' or 'shouting' for the attack/punchline)."
+                if tags else "- Set every tag to none.")
     return f"""{describe_timeline(tl, meta)}
 
 Write a voice-over where the cat, named {name}, talks out loud to its owner (calls them {ADDRESS[lang]}) about what is happening. Style: {style}.
@@ -97,7 +104,8 @@ Rules:
 - Numbers written as words, no digits, no emojis, no quotes, no stage directions.
 - Give each line an "at" time (seconds) so jokes land on the matching moment in the timeline; lines in time order, first line near 0, last line starting before {tl['duration'] - 4:.0f}s.
 - It must sound natural when spoken aloud: simple everyday words and normal phrasing, like a real thought. No strange metaphors, made-up phrases or forced wordplay; the humour comes from the cat's attitude and what is really happening.
-- A clear mini story with escalation and a funny ending line."""
+- A clear mini story with escalation and a funny ending line.
+{tag_rule}"""
 
 
 def validate(lines: list[dict], lang: str, budget: int) -> list[str]:
@@ -159,7 +167,8 @@ def pick_window(tl: dict, length: float) -> tuple[float, dict]:
     return start, {**tl, "duration": length, "events": events}
 
 
-def write_script(timeline: Path, lang: str, style: str, name: str, window: float) -> tuple[float, float, list[dict]]:
+def write_script(timeline: Path, lang: str, style: str, name: str, window: float,
+                 tags: bool = False) -> tuple[float, float, list[dict]]:
     full = json.loads(timeline.read_text(encoding="utf-8"))
     start, tl = pick_window(full, window)
     meta_path = timeline.parents[2] / "inbox" / f"{tl['video'].rsplit('.', 1)[0]}.json"
@@ -168,7 +177,7 @@ def write_script(timeline: Path, lang: str, style: str, name: str, window: float
     log.info("window %.1fs-%.1fs, budget %d chars", start, start + tl["duration"], budget)
 
     key = load_key("OPEN_AI_API")
-    messages = [{"role": "user", "content": build_prompt(tl, meta, lang, style, budget, name)}]
+    messages = [{"role": "user", "content": build_prompt(tl, meta, lang, style, budget, name, tags)}]
     for attempt in range(1, MAX_ATTEMPTS + 1):
         lines = ask(key, messages)
         problems = validate(lines, lang, budget)
@@ -190,17 +199,22 @@ def main() -> None:
     ap.add_argument("--style", default="comedy")
     ap.add_argument("--name", default="Karees", help="the cat's name")
     ap.add_argument("--window", type=float, default=0, help="seconds of clip to use; 0 = all")
+    ap.add_argument("--tags", action="store_true", help="add eleven_v3 delivery tags (written to <out>.tagged)")
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
 
-    start, length, lines = write_script(args.timeline, args.lang, args.style, args.name, args.window)
+    start, length, lines = write_script(args.timeline, args.lang, args.style, args.name,
+                                        args.window, args.tags)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text("\n".join(l["text"].strip() for l in lines) + "\n", encoding="utf-8", newline="\n")
+    tagged = [(f"[{l['tag']}] " if l["tag"] != "none" else "") + l["text"].strip() for l in lines]
+    args.out.with_suffix(args.out.suffix + ".tagged").write_text(
+        "\n".join(tagged) + "\n", encoding="utf-8", newline="\n")
     args.out.with_suffix(args.out.suffix + ".json").write_text(
         json.dumps({"model": MODEL, "start": start, "length": length, "lines": lines},
                    ensure_ascii=False, indent=2), encoding="utf-8")
     for l in lines:
-        log.info("%5.1fs  %s", l["at"], l["text"])
+        log.info("%5.1fs  %-10s %s", l["at"], l["tag"], l["text"])
 
 
 if __name__ == "__main__":

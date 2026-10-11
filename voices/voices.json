@@ -1,0 +1,19 @@
+{
+  "karees_mass_hero_ta": {
+    "provider": "elevenlabs",
+    "voice_id": "6Ph7xUedwOwQr6ksq7Jq",
+    "name": "Karees Mass Hero (ta)",
+    "model_id": "eleven_v3",
+    "language": "ta",
+    "source": "ElevenLabs voice design from a style description (not a clone of any person)",
+    "description": "Adult Tamil man in his late twenties, voice actor dubbing a funny pet cat for YouTube Shorts. Medium-high male pitch, not childlike, not female. Wildly expressive and animated: big rises and falls, dramatic mass-hero swagger, mock-serious build-ups, cheeky teasing. Natural conversational pace, not rushed. Colloquial Chennai Tamil, close-mic studio recording.",
+    "sample_file": "voices/karees_mass_hero_ta_sample.mp3 (local only, not in git)",
+    "measured": {
+      "pitch_hz": 274,
+      "pitch_range_semitones": 8.9,
+      "onsets_per_s": 7.5,
+      "words_match": 0.96
+    },
+    "suggested_voice_tempo": 0.85
+  }
+}
