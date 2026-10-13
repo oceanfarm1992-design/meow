@@ -48,7 +48,8 @@ STYLE_RULES = {
 }
 ADDRESS = {"ta": "மம்மி", "en": "Mom"}
 # eleven_v3 delivery tags; "none" when the voice engine has no tag support
-TAGS = ["none", "excited", "dramatic", "proud", "sarcastic", "laughs", "whispers", "shouting", "curious"]
+# "shouting" removed: it garbled Tamil lines twice in tests
+TAGS = ["none", "excited", "dramatic", "proud", "sarcastic", "laughs", "whispers", "curious"]
 
 SCHEMA = {
     "name": "cat_script",
@@ -90,7 +91,7 @@ def describe_timeline(tl: dict, meta: dict | None) -> str:
 def build_prompt(tl: dict, meta: dict | None, lang: str, style: str, budget: int, name: str,
                  tags: bool) -> str:
     tag_rule = ("- Give each line a delivery tag that fits the moment (vary them, use 'dramatic' or "
-                "'proud' for build-ups and 'excited' or 'shouting' for the attack/punchline)."
+                "'proud' for build-ups and 'excited' for the attack/punchline)."
                 if tags else "- Set every tag to none.")
     return f"""{describe_timeline(tl, meta)}
 
@@ -128,18 +129,22 @@ def validate(lines: list[dict], lang: str, budget: int) -> list[str]:
     return problems
 
 
-def ask(key: str, messages: list[dict]) -> list[dict]:
+def ask_schema(key: str, messages: list[dict], schema: dict) -> dict:
+    """One chat call constrained to a JSON schema; returns the parsed object."""
     resp = requests.post(
         CHAT_URL,
         headers={"Authorization": f"Bearer {key}"},
         json={"model": MODEL, "messages": messages,
-              "response_format": {"type": "json_schema", "json_schema": SCHEMA}},
+              "response_format": {"type": "json_schema", "json_schema": schema}},
         timeout=180,
     )
     if not resp.ok:
         raise RuntimeError(f"OpenAI {resp.status_code}: {resp.text[:300]}")
-    content = resp.json()["choices"][0]["message"]["content"]
-    return json.loads(content)["lines"]
+    return json.loads(resp.json()["choices"][0]["message"]["content"])
+
+
+def ask(key: str, messages: list[dict]) -> list[dict]:
+    return ask_schema(key, messages, SCHEMA)["lines"]
 
 
 def pick_window(tl: dict, length: float) -> tuple[float, dict]:

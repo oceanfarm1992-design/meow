@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 import requests
 
+from check_voice import CUT_DB, tail_db
 from keys import load_key
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -29,6 +30,7 @@ SR = 44100
 GAP_SECONDS = 0.3
 STABILITY = 0.5   # eleven_v3: 0.0 creative, 0.5 natural, 1.0 robust
 TAG = re.compile(r"^\s*\[[a-z ]+\]\s*")
+MAX_TRIES = 3     # regenerate a line whose ending comes back cut off
 
 
 def load_voice(name: str) -> dict:
@@ -53,6 +55,24 @@ def synth(key: str, voice: dict, text: str, dest: Path) -> None:
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", fh.name, "-ac", "1", "-ar", str(SR),
                     "-sample_fmt", "s16", str(dest)], check=True)
     Path(fh.name).unlink()
+
+
+def synth_checked(key: str, voice: dict, text: str, dest: Path) -> int:
+    """Synthesise, regenerating while the last 120 ms is still loud (cut mid-word).
+    Keeps the attempt with the quietest ending; returns the number of tries used."""
+    best = None
+    for attempt in range(1, MAX_TRIES + 1):
+        trial = dest.with_name(f"{dest.stem}.try{attempt}.wav")
+        synth(key, voice, text, trial)
+        level, _ = tail_db(trial)
+        if best is None or level < best[0]:
+            best = (level, trial)
+        if level <= CUT_DB:
+            break
+    best[1].replace(dest)
+    for leftover in dest.parent.glob(f"{dest.stem}.try*.wav"):
+        leftover.unlink()
+    return attempt
 
 
 def read_pcm(path: Path) -> np.ndarray:
@@ -86,10 +106,10 @@ def main() -> None:
     parts = []
     for i, line in enumerate(lines):
         wav = args.out / "parts" / f"part_{i:02d}.wav"
-        synth(key, voice, line, wav)
+        tries = synth_checked(key, voice, line, wav)
         (args.out / "texts" / f"part_{i:02d}.txt").write_text(TAG.sub("", line), encoding="utf-8")
         parts.append(wav)
-        print(f"wrote {wav.name} (engine=elevenlabs:{voice['model_id']}) {line}")
+        print(f"wrote {wav.name} (engine=elevenlabs:{voice['model_id']}, tries {tries}) {line}")
     join(parts, args.out / "voice.wav")
     print(f"joined {len(parts)} parts into {args.out / 'voice.wav'}")
 

@@ -108,7 +108,11 @@ def render(args: argparse.Namespace) -> None:
     clip_len = args.length or probe_seconds(args.clip) - args.start
     with tempfile.TemporaryDirectory() as tmp:
         tight = Path(tmp) / "voice_tight.wav"
-        voice_len = tighten(args.voice, tight) / args.tempo + LEAD_IN
+        if args.no_tighten:
+            tight.write_bytes(args.voice.read_bytes())
+            voice_len = probe_seconds(args.voice) / args.tempo + LEAD_IN
+        else:
+            voice_len = tighten(args.voice, tight) / args.tempo + LEAD_IN
         hold = max(0.0, voice_len + 0.6 - clip_len)  # never cut the narration
         total = clip_len + hold
 
@@ -140,6 +144,8 @@ def main() -> None:
     ap.add_argument("--start", type=float, default=0.0)
     ap.add_argument("--length", type=float, default=0.0, help="0 = to the end of the clip")
     ap.add_argument("--banner", default="")
+    ap.add_argument("--no-tighten", action="store_true",
+                    help="keep the voice timing as is (story mode: scenes are cut to it)")
     ap.add_argument("--tempo", type=float, default=1.0,
                     help="voice speed: 0.9 = 10%% slower, same pitch (0.5-2.0)")
     render(ap.parse_args())

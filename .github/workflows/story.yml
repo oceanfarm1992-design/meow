@@ -1,0 +1,101 @@
+name: story
+
+# Told-story Short: OpenAI plans a story in scenes -> each scene is narrated with an
+# ElevenLabs voice and gets a Pexels clip chosen by CLIP -> clips are cut to the
+# narration -> music bed + banner -> OpenAI transcription checks the words.
+# Nothing is published; results are uploaded as run artifacts.
+
+on:
+  workflow_dispatch:
+    inputs:
+      theme:
+        description: Story idea (empty = the model invents one)
+        default: ""
+      language:
+        description: ta or en
+        default: ta
+      cat-name:
+        description: The hero cat's name
+        default: Karees
+      seconds:
+        description: Target story length in seconds
+        default: "45"
+      elevenlabs-voice:
+        description: Key in voices/voices.json
+        default: karees_mass_hero_ta
+      voice-tempo:
+        description: "Voice speed, same pitch: 0.9 = 10% slower"
+        default: "0.9"
+      banner:
+        description: Banner title (empty = the story's own title)
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  story:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install ffmpeg
+        timeout-minutes: 6   # a stuck apt mirror once took 18 min
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg fonts-dejavu-core
+      - run: pip install -r requirements.txt
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-clip-vit-base-patch32
+      - name: Plan the story (OpenAI)
+        env:
+          OPEN_AI_API: ${{ secrets.OPEN_AI_API }}
+          THEME: ${{ inputs.theme }}
+        run: |
+          python pipeline/story_plan.py --theme "$THEME" --lang "${{ inputs.language }}" \
+            --name "${{ inputs.cat-name }}" --seconds "${{ inputs.seconds }}" --out story/story.json
+          python3 - >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          import json
+          p = json.load(open("story/story.json", encoding="utf-8"))
+          print(f"## Story: {p['title']}\n")
+          for i, s in enumerate(p["scenes"], 1):
+              print(f"{i}. **[{s['tag']}]** {s['text']}  \n   _clip search: {s['query']}_")
+          EOF
+      - name: Narrate scenes and pick clips
+        env:
+          ELEVENLAB_API: ${{ secrets.ELEVENLAB_API }}
+          PEXELS_API: ${{ secrets.PEXELS_API }}
+        run: |
+          python pipeline/story_build.py story/story.json --voice "${{ inputs.elevenlabs-voice }}" \
+            --tempo "${{ inputs.voice-tempo }}" --out story | tee story/build.log
+      - name: Render (music bed, banner)
+        env:
+          BANNER: ${{ inputs.banner }}
+        run: |
+          title=$(python3 -c "import json;print(json.load(open('story/story.json',encoding='utf-8'))['title'])")
+          python pipeline/music.py --seconds 120 --out music.wav
+          # the voice is already in sync with the scenes: no pause tightening, no extra tempo
+          python pipeline/render.py --clip story/montage.mp4 --voice story/voice.wav --music music.wav \
+            --out final.mp4 --banner "${BANNER:-$title}" --no-tighten --tempo 1.0 \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          { echo; echo "Clips:"; sed 's/^/- /' story/credits.txt; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Check spoken words (OpenAI transcription)
+        env:
+          OPEN_AI_API: ${{ secrets.OPEN_AI_API }}
+        run: |
+          python pipeline/check_voice.py --wavs story/parts --texts story/texts \
+            --lang "${{ inputs.language }}" --json voice_check.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: story-final
+          path: |
+            final.mp4
+            voice_check.json
+            story/story.json
+            story/credits.txt
+            story/build.log
+          retention-days: 7
