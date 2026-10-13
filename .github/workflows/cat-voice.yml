@@ -23,6 +23,9 @@ on:
       window:
         description: Seconds of the clip to use (liveliest stretch); 0 = whole clip
         default: "30"
+      music-style:
+        description: Comedy music bed, bouncy (cartoon oom-pah) or sneaky (tiptoe heist)
+        default: bouncy
       banner:
         description: Title shown in the black banner at the top (empty = none)
         default: KAREES TALKS
@@ -30,8 +33,8 @@ on:
         description: "Voice speed, same pitch: 1.0 = as generated, 0.9 = 10% slower"
         default: "0.9"
       voice-engine:
-        description: "own = cloned voice (styletts2-voice-clone); elevenlabs = voice from voices/voices.json"
-        default: own
+        description: "elevenlabs = Karees cat voice (voices/voices.json); own = cloned voice (styletts2-voice-clone)"
+        default: elevenlabs
       elevenlabs-voice:
         description: Key in voices/voices.json (used when voice-engine = elevenlabs)
         default: karees_mass_hero_ta
@@ -219,7 +222,7 @@ jobs:
             start=$(python3 -c "import json;print(json.load(open('$meta'))['start'])")
             length=$(python3 -c "import json;print(json.load(open('$meta'))['length'])")
           fi
-          python pipeline/music.py --seconds 90 --out music.wav
+          python pipeline/music.py --style "${{ inputs.music-style }}" --seconds 90 --out music.wav
           # never cuts the narration: holds the last frame if the voice is longer
           python pipeline/render.py --clip "$clip" --voice voice.wav --music music.wav \
             --out final.mp4 --start "$start" --length "$length" --banner "$BANNER" \
