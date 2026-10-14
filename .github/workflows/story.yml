@@ -1,8 +1,9 @@
 name: story
 
-# Told-story Short: OpenAI plans a story in scenes -> each scene is narrated with an
-# ElevenLabs voice and gets a Pexels clip chosen by CLIP -> clips are cut to the
-# narration -> music bed + banner -> OpenAI transcription checks the words.
+# Told-story Short: OpenAI plans a story in scenes -> the story is narrated (default:
+# the owner's cloned voice via styletts2-voice-clone; or an ElevenLabs voice) -> each
+# scene gets a Pexels clip chosen by CLIP and cut to its narration -> music bed +
+# banner -> OpenAI transcription checks the words.
 # Nothing is published; results are uploaded as run artifacts.
 
 on:
@@ -20,8 +21,11 @@ on:
       seconds:
         description: Target story length in seconds
         default: "45"
+      voice-engine:
+        description: "own = cloned voice (styletts2-voice-clone); elevenlabs = voice from voices/voices.json"
+        default: own
       elevenlabs-voice:
-        description: Key in voices/voices.json
+        description: Key in voices/voices.json (used when voice-engine = elevenlabs)
         default: karees_mass_hero_ta
       voice-tempo:
         description: "Voice speed, same pitch: 0.9 = 10% slower"
@@ -37,7 +41,60 @@ permissions:
   contents: read
 
 jobs:
-  story:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      text: ${{ steps.text.outputs.text }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests==2.34.2
+      - name: Plan the story (OpenAI)
+        env:
+          OPEN_AI_API: ${{ secrets.OPEN_AI_API }}
+          THEME: ${{ inputs.theme }}
+        run: |
+          python pipeline/story_plan.py --theme "$THEME" --lang "${{ inputs.language }}" \
+            --name "${{ inputs.cat-name }}" --seconds "${{ inputs.seconds }}" --out story/story.json
+          python3 - >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          import json
+          p = json.load(open("story/story.json", encoding="utf-8"))
+          print(f"## Story: {p['title']}\n")
+          for i, s in enumerate(p["scenes"], 1):
+              print(f"{i}. **[{s['tag']}]** {s['text']}  \n   _clip search: {s['query']}_")
+          EOF
+      - id: text
+        run: |
+          {
+            echo "text<<STORY_EOF"
+            python3 -c "import json;print(' '.join(s['text'].strip() for s in json.load(open('story/story.json',encoding='utf-8'))['scenes']))"
+            echo "STORY_EOF"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: story-plan
+          path: story/story.json
+          retention-days: 7
+
+  voice:
+    needs: plan
+    if: inputs.voice-engine == 'own'
+    uses: oceanfarm1992-design/styletts2-voice-clone/.github/workflows/narrate.yml@main
+    with:
+      text: ${{ needs.plan.outputs.text }}
+      language: ${{ inputs.language }}
+      style: comedy
+      artifact-name: voiceover
+    secrets:
+      VOICE_REPO_PAT: ${{ secrets.VOICE_REPO_PAT }}
+
+  build:
+    needs: [plan, voice]
+    # runs after the cloned-voice job, or straight after planning when ElevenLabs is used
+    if: ${{ !cancelled() && needs.plan.result == 'success' && (needs.voice.result == 'success' || needs.voice.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -54,26 +111,31 @@ jobs:
         with:
           path: ~/.cache/huggingface
           key: hf-clip-vit-base-patch32
-      - name: Plan the story (OpenAI)
-        env:
-          OPEN_AI_API: ${{ secrets.OPEN_AI_API }}
-          THEME: ${{ inputs.theme }}
-        run: |
-          python pipeline/story_plan.py --theme "$THEME" --lang "${{ inputs.language }}" \
-            --name "${{ inputs.cat-name }}" --seconds "${{ inputs.seconds }}" --out story/story.json
-          python3 - >> "$GITHUB_STEP_SUMMARY" <<'EOF'
-          import json
-          p = json.load(open("story/story.json", encoding="utf-8"))
-          print(f"## Story: {p['title']}\n")
-          for i, s in enumerate(p["scenes"], 1):
-              print(f"{i}. **[{s['tag']}]** {s['text']}  \n   _clip search: {s['query']}_")
-          EOF
+      - uses: actions/download-artifact@v4
+        with:
+          name: story-plan
+          path: story
+      - uses: actions/download-artifact@v4
+        if: inputs.voice-engine == 'own'
+        with:
+          pattern: voiceover-part_*     # per-sentence WAVs from the cloned-voice engine
+          path: own/wavs
+      - uses: actions/download-artifact@v4
+        if: inputs.voice-engine == 'own'
+        with:
+          name: voiceover-script-parts  # per-sentence texts from the cloned-voice engine
+          path: own/texts
       - name: Narrate scenes and pick clips
         env:
           ELEVENLAB_API: ${{ secrets.ELEVENLAB_API }}
           PEXELS_API: ${{ secrets.PEXELS_API }}
         run: |
-          python pipeline/story_build.py story/story.json --voice "${{ inputs.elevenlabs-voice }}" \
+          if [ "${{ inputs.voice-engine }}" = own ]; then
+            voice_args="--parts own/wavs --texts own/texts"
+          else
+            voice_args="--voice ${{ inputs.elevenlabs-voice }}"
+          fi
+          python pipeline/story_build.py story/story.json $voice_args \
             --tempo "${{ inputs.voice-tempo }}" --out story | tee story/build.log
       - name: Render (music bed, banner)
         env:
@@ -90,7 +152,12 @@ jobs:
         env:
           OPEN_AI_API: ${{ secrets.OPEN_AI_API }}
         run: |
-          python pipeline/check_voice.py --wavs story/parts --texts story/texts \
+          if [ "${{ inputs.voice-engine }}" = own ]; then
+            wavs=own/wavs; texts=own/texts
+          else
+            wavs=story/parts; texts=story/texts
+          fi
+          python pipeline/check_voice.py --wavs "$wavs" --texts "$texts" \
             --lang "${{ inputs.language }}" --json voice_check.json >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:

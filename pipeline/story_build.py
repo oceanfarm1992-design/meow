@@ -10,6 +10,7 @@ Keys: ELEVENLAB_API, PEXELS_API.
 """
 import argparse
 import json
+import re
 import subprocess
 import wave
 from pathlib import Path
@@ -99,24 +100,85 @@ def write_voice(parts: list[tuple[Path, float]], dest: Path) -> None:
         w.writeframes(np.concatenate(chunks).tobytes())
 
 
-def build(plan: dict, voice_name: str, tempo: float, out: Path) -> None:
-    voice, el_key, px_key = load_voice(voice_name), load_key("ELEVENLAB_API"), load_key("PEXELS_API")
-    for sub in ("parts", "texts", "scenes"):
-        (out / sub).mkdir(parents=True, exist_ok=True)
-    ranker = ClipRanker()
-    used: set[int] = set()
-    voice_parts, scene_files, credits = [], [], []
+def norm(text: str) -> str:
+    return re.sub(r"[\W_]+", "", text.lower())
+
+
+def to_mono_pcm(src: Path) -> np.ndarray:
+    tmp = src.with_suffix(".mono.wav")
+    run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-ac", "1", "-ar", str(SR),
+         "-sample_fmt", "s16", str(tmp)])
+    pcm = read_pcm(tmp)
+    tmp.unlink()
+    return pcm
+
+
+def voices_elevenlabs(plan: dict, voice_name: str, tempo: float, out: Path) -> list[tuple[Path, float, str]]:
+    """Narrate each scene with an ElevenLabs voice (reuses narration on re-runs)."""
+    voice, key = load_voice(voice_name), load_key("ELEVENLAB_API")
+    result = []
     for i, scene in enumerate(plan["scenes"]):
         tagged = (f"[{scene['tag']}] " if scene["tag"] != "none" else "") + scene["text"].strip()
-        wav = out / "parts" / f"part_{i:02d}.wav"
-        said = out / "texts" / f"part_{i:02d}.txt"
+        wav, said = out / "parts" / f"part_{i:02d}.wav", out / "texts" / f"part_{i:02d}.txt"
         if wav.exists() and said.exists() and said.read_text(encoding="utf-8") == scene["text"].strip():
             dur, tries = seconds(wav), 0  # re-run: reuse narration, no credits spent
         else:
-            dur, tries = narrate(el_key, voice, tagged, tempo, wav)
+            dur, tries = narrate(key, voice, tagged, tempo, wav)
             said.write_text(scene["text"].strip(), encoding="utf-8")
-        need = max(MIN_SCENE, dur + SCENE_GAP)
+        result.append((wav, dur, f"elevenlabs:{voice['model_id']}, tries {tries}"))
+    return result
 
+
+def voices_from_parts(plan: dict, parts_dir: Path, texts_dir: Path, tempo: float,
+                      out: Path) -> list[tuple[Path, float, str]]:
+    """Use sentence WAVs from the cloned-voice engine (narrate.yml): give each part to the
+    scene its text starts in, join a scene's parts, then apply the tempo."""
+    parts = sorted(parts_dir.rglob("part_*.wav"), key=lambda p: p.stem)
+    texts = {p.stem: p.read_text(encoding="utf-8") for p in texts_dir.rglob("part_*.txt")}
+    bounds, pos = [], 0
+    for scene in plan["scenes"]:
+        pos += len(norm(scene["text"]))
+        bounds.append(pos)
+    groups: list[list[Path]] = [[] for _ in plan["scenes"]]
+    cursor = 0
+    for part in parts:
+        scene_idx = next((i for i, b in enumerate(bounds) if cursor < b), len(bounds) - 1)
+        groups[scene_idx].append(part)
+        cursor += len(norm(texts.get(part.stem, "")))
+    gap = np.zeros(int(0.15 * SR), dtype=np.int16)
+    result = []
+    for i, group in enumerate(groups):
+        if not group:
+            raise SystemExit(f"scene {i + 1} got no voice parts; parts and scenes do not line up")
+        joined = out / "parts" / f"scene_{i:02d}.joined.wav"
+        pcm = np.concatenate([x for g in group for x in (to_mono_pcm(g), gap)][:-1])
+        with wave.open(str(joined), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(SR)
+            w.writeframes(pcm.tobytes())
+        wav = out / "parts" / f"scene_{i:02d}.wav"
+        run(["ffmpeg", "-v", "error", "-y", "-i", str(joined), "-af", f"atempo={tempo}", str(wav)])
+        joined.unlink()
+        result.append((wav, seconds(wav), f"own voice, parts {', '.join(g.stem for g in group)}"))
+    return result
+
+
+def build(plan: dict, out: Path, tempo: float, voice_name: str = "",
+          parts_dir: Path | None = None, texts_dir: Path | None = None) -> None:
+    px_key = load_key("PEXELS_API")
+    for sub in ("parts", "texts", "scenes"):
+        (out / sub).mkdir(parents=True, exist_ok=True)
+    if parts_dir:
+        voices = voices_from_parts(plan, parts_dir, texts_dir or parts_dir, tempo, out)
+    else:
+        voices = voices_elevenlabs(plan, voice_name, tempo, out)
+
+    ranker = ClipRanker()
+    used: set[int] = set()
+    voice_parts, scene_files, credits = [], [], []
+    for i, (scene, (wav, dur, engine)) in enumerate(zip(plan["scenes"], voices)):
+        need = max(MIN_SCENE, dur + SCENE_GAP)
         video, match = pick_clip(px_key, ranker, scene["query"], need, used)
         used.add(video["id"])
         clip = download(video, ROOT / "inbox")
@@ -127,9 +189,8 @@ def build(plan: dict, voice_name: str, tempo: float, out: Path) -> None:
         cut_scene(clip, need, scene_mp4)
         voice_parts.append((wav, need))
         scene_files.append(scene_mp4)
-        print(f"scene {i + 1}: {need:4.1f}s  voice {dur:4.1f}s (tries {tries})  "
-              f"clip {video['id']} '{scene['query']}' match {match:.3f}  "
-              f"engine=elevenlabs:{voice['model_id']}")
+        print(f"scene {i + 1}: {need:4.1f}s  voice {dur:4.1f}s  clip {video['id']} "
+              f"'{scene['query']}' match {match:.3f}  engine={engine}")
 
     concat = out / "scenes" / "list.txt"
     concat.write_text("".join(f"file '{p.name}'\n" for p in scene_files), encoding="utf-8")
@@ -144,11 +205,14 @@ def build(plan: dict, voice_name: str, tempo: float, out: Path) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("plan", type=Path)
-    ap.add_argument("--voice", default="karees_mass_hero_ta")
+    ap.add_argument("--voice", default="karees_mass_hero_ta", help="ElevenLabs voice (voices.json)")
+    ap.add_argument("--parts", type=Path, help="use cloned-voice engine parts (part_XX.wav) instead")
+    ap.add_argument("--texts", type=Path, help="texts for --parts (part_XX.txt)")
     ap.add_argument("--tempo", type=float, default=0.9)
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
-    build(json.loads(args.plan.read_text(encoding="utf-8")), args.voice, args.tempo, args.out)
+    build(json.loads(args.plan.read_text(encoding="utf-8")), args.out, args.tempo,
+          voice_name=args.voice, parts_dir=args.parts, texts_dir=args.texts)
 
 
 if __name__ == "__main__":

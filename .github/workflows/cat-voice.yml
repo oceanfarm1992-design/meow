@@ -33,8 +33,8 @@ on:
         description: "Voice speed, same pitch: 1.0 = as generated, 0.9 = 10% slower"
         default: "0.9"
       voice-engine:
-        description: "elevenlabs = Karees cat voice (voices/voices.json); own = cloned voice (styletts2-voice-clone)"
-        default: elevenlabs
+        description: "own = cloned voice (styletts2-voice-clone); elevenlabs = voice from voices/voices.json"
+        default: own
       elevenlabs-voice:
         description: Key in voices/voices.json (used when voice-engine = elevenlabs)
         default: karees_mass_hero_ta
