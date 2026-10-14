@@ -18,7 +18,7 @@ log = logging.getLogger("story_plan")
 
 CHARS_PER_SECOND = {"ta": 12.0, "en": 11.0}   # narration budget incl. scene gaps
 BUDGET_TOLERANCE = 0.15
-MIN_SCENES, MAX_SCENES = 4, 7
+SECONDS_PER_SCENE = (10, 6)   # scene count scales with length: 45 s -> 4-7, 5 min -> 30-50
 SCENE_CHARS = (40, 140)
 MAX_ATTEMPTS = 3
 
@@ -57,15 +57,22 @@ SCHEMA = {
 }
 
 
-def build_prompt(theme: str, lang: str, name: str, budget: int) -> str:
+def scene_range(seconds: float) -> tuple[int, int]:
+    return max(4, round(seconds / SECONDS_PER_SCENE[0])), max(7, round(seconds / SECONDS_PER_SCENE[1]))
+
+
+def build_prompt(theme: str, lang: str, name: str, budget: int, scenes: tuple[int, int]) -> str:
     about = f"Story idea: {theme}" if theme else "Invent a funny everyday story idea."
+    if scenes[1] > 12:
+        about += (" This is a long story: give it a clear beginning, several escalating mini-adventures"
+                  " with running jokes and callbacks, and a big finale.")
     return f"""Write a short told story for a vertical animal video. The hero is a black cat named {name}.
 {about}
 {STYLE[lang].format(address=ADDRESS[lang])}
 {LANG_RULES[lang]}
 
 Rules:
-- {MIN_SCENES} to {MAX_SCENES} scenes, about {budget} narration characters in total.
+- {scenes[0]} to {scenes[1]} scenes, about {budget} narration characters in total.
 - Each scene's text is 1 or 2 sentences, {SCENE_CHARS[0]} to {SCENE_CHARS[1]} characters, each sentence ending with . ! or ?
 - Numbers written as words, no digits, no emojis, no quotes marks, no stage directions.
 - Each scene has a stock footage search query in simple English (2 to 5 words) that a free stock
@@ -75,11 +82,11 @@ Rules:
 - title: two or three English words in capitals for the banner, e.g. "KAREES STORIES"."""
 
 
-def validate(plan: dict, lang: str, budget: int) -> list[str]:
+def validate(plan: dict, lang: str, budget: int, limits: tuple[int, int]) -> list[str]:
     problems = []
     scenes = plan["scenes"]
-    if not MIN_SCENES <= len(scenes) <= MAX_SCENES:
-        problems.append(f"{len(scenes)} scenes, needs {MIN_SCENES} to {MAX_SCENES}")
+    if not limits[0] <= len(scenes) <= limits[1]:
+        problems.append(f"{len(scenes)} scenes, needs {limits[0]} to {limits[1]}")
     total = sum(len(s["text"]) for s in scenes)
     if abs(total - budget) > budget * BUDGET_TOLERANCE:
         problems.append(f"narration is {total} characters, needs about {budget}")
@@ -100,11 +107,12 @@ def validate(plan: dict, lang: str, budget: int) -> list[str]:
 
 def plan_story(theme: str, lang: str, name: str, seconds: float) -> dict:
     budget = round(seconds * CHARS_PER_SECOND[lang])
+    limits = scene_range(seconds)
     key = load_key("OPEN_AI_API")
-    messages = [{"role": "user", "content": build_prompt(theme, lang, name, budget)}]
+    messages = [{"role": "user", "content": build_prompt(theme, lang, name, budget, limits)}]
     for attempt in range(1, MAX_ATTEMPTS + 1):
         plan = ask_schema(key, messages, SCHEMA)
-        problems = validate(plan, lang, budget)
+        problems = validate(plan, lang, budget, limits)
         log.info("attempt %d (%s): %d scenes, %d chars, problems: %s", attempt, MODEL,
                  len(plan["scenes"]), sum(len(s["text"]) for s in plan["scenes"]), problems or "none")
         if not problems:

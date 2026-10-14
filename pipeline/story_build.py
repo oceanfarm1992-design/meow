@@ -55,7 +55,8 @@ def narrate(key: str, voice: dict, text: str, tempo: float, dest: Path) -> tuple
 def pick_clip(key: str, ranker: ClipRanker, query: str, need: float, used: set[int]) -> tuple[dict, float]:
     """Best visual match (CLIP) among the top results, preferring portrait clips that are long
     enough; Pexels' own ranking is loose (a 'black cat jumping' search returned a white cat)."""
-    found = [v for v in search(key, query) if v["id"] not in used][:CANDIDATES]
+    results = search(key, query)
+    found = [v for v in results if v["id"] not in used][:CANDIDATES] or results[:CANDIDATES]
     subject = HERO if HERO in query.lower() else None
     if subject:  # also look at plain hero shots: a black cat sitting beats a white cat jumping
         seen = {v["id"] for v in found}
