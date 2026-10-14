@@ -21,6 +21,7 @@ VIDEO_URL = "https://api.pexels.com/videos/videos/{id}"
 MIN_SECONDS = 5
 MAX_SECONDS = 60
 TARGET_WIDTH = 960  # small enough for fast CPU study
+DOWNLOAD_TRIES = 3
 
 
 def search(key: str, query: str, per_page: int = 30) -> list[dict]:
@@ -51,11 +52,18 @@ def download(video: dict, dest_dir: Path) -> Path:
     f = best_file(video)
     dest_dir.mkdir(parents=True, exist_ok=True)
     out = dest_dir / f"pexels_{video['id']}.mp4"
-    with requests.get(f["link"], stream=True, timeout=120) as r:
-        r.raise_for_status()
-        with out.open("wb") as fh:
-            for chunk in r.iter_content(1 << 16):
-                fh.write(chunk)
+    for attempt in range(1, DOWNLOAD_TRIES + 1):
+        try:
+            with requests.get(f["link"], stream=True, timeout=120) as r:
+                r.raise_for_status()
+                with out.open("wb") as fh:
+                    for chunk in r.iter_content(1 << 16):
+                        fh.write(chunk)
+            break
+        except requests.RequestException as err:  # dropped connections happen on big files
+            if attempt == DOWNLOAD_TRIES:
+                raise
+            print(f"download of {video['id']} failed ({err.__class__.__name__}), retrying")
     meta = {
         "id": video["id"],
         "page": video["url"],

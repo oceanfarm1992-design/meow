@@ -15,8 +15,29 @@ on:
         description: ta or en
         default: ta
       style:
-        description: comedy or default
-        default: comedy
+        description: "Voice/script style: comedy_v2 (new Tamil comedy ref), comedy or default"
+        default: comedy_v2
+      cat-name:
+        description: The cat's name used in the script
+        default: Karees
+      window:
+        description: Seconds of the clip to use (liveliest stretch); 0 = whole clip
+        default: "30"
+      music-style:
+        description: Comedy music bed, bouncy (cartoon oom-pah) or sneaky (tiptoe heist)
+        default: bouncy
+      banner:
+        description: Title shown in the black banner at the top (empty = none)
+        default: KAREES TALKS
+      voice-tempo:
+        description: "Voice speed, same pitch: 1.0 = as generated, 0.9 = 10% slower"
+        default: "0.9"
+      voice-engine:
+        description: "own = cloned voice (styletts2-voice-clone); elevenlabs = voice from voices/voices.json"
+        default: own
+      elevenlabs-voice:
+        description: Key in voices/voices.json (used when voice-engine = elevenlabs)
+        default: karees_mass_hero_ta
       script-source:
         description: "ai = OpenAI writes it from the frame study; file = scripts/pexels_<id>.<language>.txt"
         default: ai
@@ -82,6 +103,8 @@ jobs:
         run: |
           python pipeline/write_script.py "out/pexels_${{ inputs.pexels-id }}/timeline.json" \
             --lang "${{ inputs.language }}" --style "${{ inputs.style }}" \
+            --name "${{ inputs.cat-name }}" --window "${{ inputs.window }}" \
+            ${{ inputs.voice-engine == 'elevenlabs' && '--tags' || '' }} \
             --out "script/script.${{ inputs.language }}.txt"
       - name: Use hand-written script
         if: inputs.script-source == 'file'
@@ -107,6 +130,7 @@ jobs:
 
   voice:
     needs: script
+    if: inputs.voice-engine == 'own'
     uses: oceanfarm1992-design/styletts2-voice-clone/.github/workflows/narrate.yml@main
     with:
       text: ${{ needs.script.outputs.text }}
@@ -116,8 +140,56 @@ jobs:
     secrets:
       VOICE_REPO_PAT: ${{ secrets.VOICE_REPO_PAT }}
 
+  voice-elevenlabs:
+    needs: script
+    if: inputs.voice-engine == 'elevenlabs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      engines: ${{ steps.tts.outputs.engines }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests==2.34.2 numpy==2.5.3
+      - name: Install ffmpeg
+        timeout-minutes: 6
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
+      - uses: actions/download-artifact@v4
+        with:
+          name: script
+          path: script
+      - id: tts
+        env:
+          ELEVENLAB_API: ${{ secrets.ELEVENLAB_API }}
+        run: |
+          src="script/script.${{ inputs.language }}.txt"
+          [ -f "$src.tagged" ] && src="$src.tagged"
+          python pipeline/tts_elevenlabs.py "$src" --voice "${{ inputs.elevenlabs-voice }}" --out el \
+            | tee el.log
+          echo "engines=$(grep -o 'engine=[^)]*' el.log | cut -d= -f2 | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+      # same artifact names as the cloned-voice engine, so the video job is shared
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voiceover
+          path: el/voice.wav
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voiceover-part_all
+          path: el/parts/
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voiceover-script-parts
+          path: el/texts/
+          retention-days: 1
+
   video:
-    needs: [study, voice]
+    needs: [study, voice, voice-elevenlabs]
+    # run after whichever voice job ran; the other one is skipped
+    if: ${{ !cancelled() && needs.study.result == 'success' && (needs.voice.result == 'success' || needs.voice-elevenlabs.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -128,30 +200,38 @@ jobs:
       - run: pip install requests==2.34.2 numpy==2.5.3
       - name: Install ffmpeg
         timeout-minutes: 6   # a stuck apt mirror once took 18 min
-        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg fonts-dejavu-core
       - uses: actions/download-artifact@v4
         with:
           name: study
       - uses: actions/download-artifact@v4
         with:
           name: voiceover   # -> voice.wav
-      - name: Merge voice onto clip
+      - uses: actions/download-artifact@v4
+        with:
+          name: script
+          path: script
+      - name: Render (music bed, tighter pauses, banner)
+        env:
+          BANNER: ${{ inputs.banner }}
         run: |
           clip="inbox/pexels_${{ inputs.pexels-id }}.mp4"
-          vdur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$clip")
-          adur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 voice.wav)
-          # never cut the narration: if it is longer, hold the last frame until it ends
-          hold=$(python3 -c "print(round(max(0.0, $adur + 0.5 - $vdur), 2))")
-          if [ "$hold" != "0.0" ]; then
-            echo "voice ${adur}s > clip ${vdur}s: holding last frame ${hold}s"
-            ffmpeg -v error -y -i "$clip" -i voice.wav               -filter_complex "[0:v]tpad=stop_mode=clone:stop_duration=${hold}[v];[1:a]apad[a]"               -map "[v]" -map "[a]" -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p               -c:a aac -b:a 160k -shortest final.mp4
-          else
-            ffmpeg -v error -y -i "$clip" -i voice.wav               -filter_complex "[1:a]apad[a]" -map 0:v -map "[a]"               -c:v copy -c:a aac -b:a 160k -shortest final.mp4
+          meta="script/script.${{ inputs.language }}.txt.json"
+          start=0; length=0
+          if [ -f "$meta" ]; then
+            start=$(python3 -c "import json;print(json.load(open('$meta'))['start'])")
+            length=$(python3 -c "import json;print(json.load(open('$meta'))['length'])")
           fi
+          python pipeline/music.py --style "${{ inputs.music-style }}" --seconds 90 --out music.wav
+          # never cuts the narration: holds the last frame if the voice is longer
+          python pipeline/render.py --clip "$clip" --voice voice.wav --music music.wav \
+            --out final.mp4 --start "$start" --length "$length" --banner "$BANNER" \
+            --tempo "${{ inputs.voice-tempo }}" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
           credit=$(python3 -c "import json;print(json.load(open('inbox/pexels_${{ inputs.pexels-id }}.json'))['credit'])")
           {
             echo "## Voice"
-            echo "Engines per part: \`${{ needs.voice.outputs.engines }}\`"
+            echo "Engines per part: \`${{ needs.voice.outputs.engines || needs.voice-elevenlabs.outputs.engines }}\`"
             echo "(indicf5+rvc / styletts2+rvc = cloned voice, edge+rvc = fallback)"
             echo
             echo "Clip credit: $credit"

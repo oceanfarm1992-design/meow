@@ -4,3 +4,5 @@
 inbox/
 out/
 __pycache__/
+voices/*.mp3
+voices/*.wav

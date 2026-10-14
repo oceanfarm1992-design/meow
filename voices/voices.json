@@ -1,0 +1,37 @@
+{
+  "karees_mass_hero_ta": {
+    "provider": "elevenlabs",
+    "voice_id": "6Ph7xUedwOwQr6ksq7Jq",
+    "name": "Karees Mass Hero (ta)",
+    "model_id": "eleven_v3",
+    "language": "ta",
+    "source": "ElevenLabs voice design from a style description (not a clone of any person)",
+    "description": "Adult Tamil man in his late twenties, voice actor dubbing a funny pet cat for YouTube Shorts. Medium-high male pitch, not childlike, not female. Wildly expressive and animated: big rises and falls, dramatic mass-hero swagger, mock-serious build-ups, cheeky teasing. Natural conversational pace, not rushed. Colloquial Chennai Tamil, close-mic studio recording.",
+    "sample_file": "voices/karees_mass_hero_ta_sample.mp3 (local only, not in git)",
+    "measured": {
+      "pitch_hz": 274,
+      "pitch_range_semitones": 8.9,
+      "onsets_per_s": 7.5,
+      "words_match": 0.96
+    },
+    "suggested_voice_tempo": 0.85
+  },
+  "ta_comedy_v2": {
+    "provider": "own",
+    "engine": "styletts2-voice-clone (IndicF5 + RVC)",
+    "language": "ta",
+    "style": "comedy_v2",
+    "ref_audio_in_profile": "refs/ta_comedy_v2_ref.wav",
+    "local_file": "voices/ta_comedy_v2_ref.wav (local only, not in git)",
+    "source": "first sentence (0-7.25 s) of 'My new vocie for comedy 2.mp3' + 0.6 s silence",
+    "ref_text": "TODO: exact words spoken in the clip (owner to provide)",
+    "speed": 0.9,
+    "measured": {
+      "pitch_hz": 175,
+      "pitch_range_semitones": 14.9,
+      "onsets_per_s": 4.2,
+      "ending_db": -265
+    },
+    "status": "waiting: upload to voice-reference-audio/refs/ and add styles.comedy_v2.ta to profile.json"
+  }
+}
