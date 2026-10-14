@@ -15,8 +15,8 @@ on:
         description: ta or en
         default: ta
       style:
-        description: comedy or default
-        default: comedy
+        description: "Voice/script style: comedy_v2 (new Tamil comedy ref), comedy or default"
+        default: comedy_v2
       cat-name:
         description: The cat's name used in the script
         default: Karees

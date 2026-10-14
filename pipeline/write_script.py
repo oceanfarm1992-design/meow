@@ -93,6 +93,7 @@ def build_prompt(tl: dict, meta: dict | None, lang: str, style: str, budget: int
     tag_rule = ("- Give each line a delivery tag that fits the moment (vary them, use 'dramatic' or "
                 "'proud' for build-ups and 'excited' for the attack/punchline)."
                 if tags else "- Set every tag to none.")
+    style = style.split("_")[0]  # voice variants like comedy_v2 share the writing style
     return f"""{describe_timeline(tl, meta)}
 
 Write a voice-over where the cat, named {name}, talks out loud to its owner (calls them {ADDRESS[lang]}) about what is happening. Style: {style}.

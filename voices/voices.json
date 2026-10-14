@@ -15,5 +15,23 @@
       "words_match": 0.96
     },
     "suggested_voice_tempo": 0.85
+  },
+  "ta_comedy_v2": {
+    "provider": "own",
+    "engine": "styletts2-voice-clone (IndicF5 + RVC)",
+    "language": "ta",
+    "style": "comedy_v2",
+    "ref_audio_in_profile": "refs/ta_comedy_v2_ref.wav",
+    "local_file": "voices/ta_comedy_v2_ref.wav (local only, not in git)",
+    "source": "first sentence (0-7.25 s) of 'My new vocie for comedy 2.mp3' + 0.6 s silence",
+    "ref_text": "TODO: exact words spoken in the clip (owner to provide)",
+    "speed": 0.9,
+    "measured": {
+      "pitch_hz": 175,
+      "pitch_range_semitones": 14.9,
+      "onsets_per_s": 4.2,
+      "ending_db": -265
+    },
+    "status": "waiting: upload to voice-reference-audio/refs/ and add styles.comedy_v2.ta to profile.json"
   }
 }

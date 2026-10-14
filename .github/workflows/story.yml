@@ -21,6 +21,9 @@ on:
       seconds:
         description: Target story length in seconds
         default: "45"
+      style:
+        description: "Voice style in the profile: comedy_v2 (new Tamil comedy ref), comedy or default"
+        default: comedy_v2
       voice-engine:
         description: "own = cloned voice (styletts2-voice-clone); elevenlabs = voice from voices/voices.json"
         default: own
@@ -86,7 +89,7 @@ jobs:
     with:
       text: ${{ needs.plan.outputs.text }}
       language: ${{ inputs.language }}
-      style: comedy
+      style: ${{ inputs.style }}
       artifact-name: voiceover
     secrets:
       VOICE_REPO_PAT: ${{ secrets.VOICE_REPO_PAT }}
